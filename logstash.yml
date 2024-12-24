@@ -1,0 +1,81 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: logstash-pipeline-config
+  namespace: kafka-elk
+data:
+  logstash.conf: |
+    input {
+      kafka {
+        bootstrap_servers => "211.183.3.198:30092"  # Kafka 브로커 주소
+        topics => ["test-topic"]          # Kafka 토픽 이름
+        group_id => "logstash-group"      # Kafka 소비자 그룹 ID
+        codec => "json"                   # Kafka 메시지가 JSON 형식이라면 codec 설정
+        auto_offset_reset => "earliest"   # Kafka 메시지를 어디부터 읽을지 설정 (earliest 또는 latest)
+      }
+    }
+
+    filter {
+      if [message] {
+        json {
+          source => "message"             # Kafka 메시지에서 JSON 필드를 추출
+        }
+      }
+      mutate {
+        add_field => { "source" => "kafka" }
+      }
+    }
+
+    output {
+      elasticsearch {
+        hosts => ["https://211.183.3.198:30920"]
+        user => "elastic"
+        password => "test123"
+        ssl => true
+        ssl_certificate_verification => false
+        index => "kafka-logs-%{+YYYY.MM.dd}"  # Elasticsearch 인덱스 이름
+      }
+      stdout { codec => rubydebug }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logstash-deployment
+  namespace: kafka-elk
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: logstash
+  template:
+    metadata:
+      labels:
+        app: logstash
+    spec:
+      containers:
+      - name: logstash
+        image: docker.elastic.co/logstash/logstash:8.10.1
+        ports:
+        - containerPort: 5044
+        volumeMounts:
+        - name: logstash-pipeline-volume
+          mountPath: /usr/share/logstash/pipeline/logstash.conf
+          subPath: logstash.conf
+      volumes:
+      - name: logstash-pipeline-volume
+        configMap:
+          name: logstash-pipeline-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: logstash
+  namespace: kafka-elk
+spec:
+  ports:
+  - port: 5044
+    targetPort: 5044
+  selector:
+    app: logstash
+
